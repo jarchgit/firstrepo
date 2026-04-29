@@ -1,0 +1,121 @@
+{
+  "version": "1.2",
+  "title": "Oracle Database Naming Convention Standards",
+  "prefixes": {
+    "table": {
+      "prefix": null,
+      "maxLen": 30,
+      "description": "Tables: UPPERCASE, must be prefixed with schema owner (e.g. SCHEMA.TABLE_NAME)"
+    },
+    "view": {
+      "prefix": "V_",
+      "maxLen": 30,
+      "description": "Views: must start with V_"
+    },
+    "materialized_view": {
+      "prefix": "MV_",
+      "maxLen": 30,
+      "description": "Materialized Views: must start with MV_"
+    },
+    "index": {
+      "prefix": null,
+      "maxLen": 30,
+      "description": "Indexes: must follow format {TABLE_NAME}_IX{n} (e.g. EMPLOYEES_IX1, EMPLOYEES_IX2)"
+    },
+    "unique_index": {
+      "prefix": null,
+      "maxLen": 30,
+      "description": "Unique Indexes: must follow format {TABLE_NAME}_UI{n} (e.g. EMPLOYEES_UI1)"
+    },
+    "sequence": {
+      "prefix": "SEQ_",
+      "maxLen": 30,
+      "description": "Sequences: must start with SEQ_"
+    },
+    "procedure": {
+      "prefix": "P_",
+      "maxLen": 30,
+      "description": "Procedures: must start with P_"
+    },
+    "function": {
+      "prefix": "F_",
+      "maxLen": 30,
+      "description": "Functions: must start with F_"
+    },
+    "package": {
+      "prefix": "PKG_",
+      "maxLen": 30,
+      "description": "Packages: must start with PKG_"
+    },
+    "trigger": {
+      "prefix": "TRG_",
+      "maxLen": 30,
+      "description": "Triggers: must start with TRG_"
+    },
+    "constraint_pk": {
+      "prefix": null,
+      "suffix": "_PK",
+      "pkMustMatchTable": true,
+      "maxLen": 30,
+      "description": "Primary Keys: must be named {TABLE_NAME}_PK (e.g. EMPLOYEES_PK)"
+    },
+    "constraint_fk": {
+      "prefix": "FK_",
+      "maxLen": 30,
+      "description": "Foreign Keys: must start with FK_"
+    },
+    "constraint_uq": {
+      "prefix": "UQ_",
+      "maxLen": 30,
+      "description": "Unique Constraints: must start with UQ_"
+    },
+    "constraint_chk": {
+      "prefix": "CHK_",
+      "maxLen": 30,
+      "description": "Check Constraints: must start with CHK_"
+    },
+    "synonym": {
+      "prefix": "SYN_",
+      "maxLen": 30,
+      "description": "Synonyms: must start with SYN_"
+    },
+    "type": {
+      "prefix": "TYP_",
+      "maxLen": 30,
+      "description": "Types: must start with TYP_"
+    }
+  },
+  "tablespace": {
+    "tablesSuffix": "_DTS",
+    "indexSuffix": "_ITS",
+    "description": "Tablespaces: must end in _DTS for table data (e.g. USERS_DTS), _ITS for indexes (e.g. USERS_ITS)"
+  },
+  "pdb": {
+    "description": "PDB names: UPPERCASE, 3-30 chars, start with letter",
+    "environments": ["DEV", "TEST", "UAT", "PROD", "STG"],
+    "suffixRequired": true,
+    "example": "MYAPP_PROD"
+  },
+  "service": {
+    "description": "Service names: lowercase, use dot notation for domain, max 64 chars",
+    "example": "myapp.prod.company.com"
+  },
+  "columns": {
+    "description": "Columns: UPPERCASE, max 30 chars",
+    "primaryKeySuffix": "_ID",
+    "foreignKeySuffix": "_ID",
+    "auditColumns": ["CREATED_BY", "CREATED_DATE", "MODIFIED_BY", "MODIFIED_DATE"],
+    "reservedWords": ["DATE", "NUMBER", "VARCHAR", "CHAR", "INTEGER", "FLOAT", "BLOB", "CLOB", "USER", "LEVEL", "ROWID", "ROWNUM"]
+  },
+  "general": {
+    "noSpaces": true,
+    "noSpecialChars": true,
+    "maxIdentifierLength": 30,
+    "noCamelCase": true,
+    "useUnderscores": true,
+    "noLeadingUnderscore": true,
+    "noTrailingUnderscore": true,
+    "noDoubleUnderscore": true,
+    "requireSchemaPrefix": true
+  }
+}

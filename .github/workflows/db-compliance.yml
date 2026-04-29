@@ -1,0 +1,166 @@
+# ═══════════════════════════════════════════════════════════════════
+# DB Compliance Checker — GitHub Actions Agent
+# Triggers automatically when .sql or .ddl files are pushed or
+# included in a Pull Request. Posts results as a PR comment and
+# fails the check if CRITICAL or HIGH violations are found.
+# ═══════════════════════════════════════════════════════════════════
+
+name: DB Compliance Check
+
+on:
+  push:
+    paths:
+      - '**.sql'
+      - '**.ddl'
+  pull_request:
+    paths:
+      - '**.sql'
+      - '**.ddl'
+
+permissions:
+  contents: read
+  pull-requests: write   # needed to post PR comments
+
+jobs:
+  compliance-check:
+    name: Oracle Naming Standards Check
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── 1. Checkout the repository ──────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history needed to diff changed files
+
+      # ── 2. Set up Node.js ───────────────────────────────────────
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # ── 3. Detect changed SQL files ─────────────────────────────
+      - name: Get changed SQL/DDL files
+        id: changed-files
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            # For PRs: compare base branch to head
+            CHANGED=$(git diff --name-only origin/${{ github.base_ref }}...HEAD \
+              | grep -E '\.(sql|ddl)$' || true)
+          else
+            # For pushes: compare previous commit to current
+            CHANGED=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }} \
+              | grep -E '\.(sql|ddl)$' || true)
+          fi
+
+          echo "Found changed SQL files:"
+          echo "$CHANGED"
+
+          # Pass as multiline env var
+          EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
+          echo "files<<$EOF" >> $GITHUB_OUTPUT
+          echo "$CHANGED" >> $GITHUB_OUTPUT
+          echo "$EOF" >> $GITHUB_OUTPUT
+
+          # Count files
+          COUNT=$(echo "$CHANGED" | grep -c '\S' || echo "0")
+          echo "count=$COUNT" >> $GITHUB_OUTPUT
+
+      # ── 4. Skip if no SQL files changed ─────────────────────────
+      - name: Check if there are SQL files to scan
+        if: steps.changed-files.outputs.count == '0'
+        run: |
+          echo "ℹ️ No SQL/DDL files changed in this push. Skipping compliance check."
+          exit 0
+
+      # ── 5. Copy agent scripts into workspace ────────────────────
+      #    These files should live in a .github/compliance/ folder
+      #    in your repository alongside this workflow.
+      - name: Verify agent scripts exist
+        run: |
+          if [ ! -f ".github/compliance/compliance-engine-node.js" ]; then
+            echo "❌ Missing: .github/compliance/compliance-engine-node.js"
+            exit 1
+          fi
+          if [ ! -f ".github/compliance/compliance-runner.js" ]; then
+            echo "❌ Missing: .github/compliance/compliance-runner.js"
+            exit 1
+          fi
+          echo "✅ Agent scripts found"
+
+      # ── 6. Run the compliance check ─────────────────────────────
+      - name: Run DB Compliance Check
+        id: compliance
+        env:
+          CHANGED_FILES: ${{ steps.changed-files.outputs.files }}
+          REPO_ROOT: ${{ github.workspace }}
+          # Point to your custom standards file (optional)
+          # Remove this line to use built-in Oracle defaults
+          STANDARDS_PATH: .github/compliance/standards_cust_json.json
+          # Severities that will FAIL the check (comma-separated)
+          FAIL_ON_SEVERITY: CRITICAL,HIGH
+          OUTPUT_FORMAT: json
+        run: |
+          cd .github/compliance
+          node compliance-runner.js
+        continue-on-error: true   # we handle exit code manually below
+
+      # ── 7. Post PR comment with results ─────────────────────────
+      - name: Post compliance results as PR comment
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const reportPath = '.github/compliance/compliance-report.md';
+
+            if (!fs.existsSync(reportPath)) {
+              console.log('No report file found, skipping comment.');
+              return;
+            }
+
+            const body = fs.readFileSync(reportPath, 'utf8');
+
+            // Find and delete any previous compliance comment
+            const comments = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            for (const comment of comments.data) {
+              if (comment.body.includes('DB Compliance Check Results')) {
+                await github.rest.issues.deleteComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  comment_id: comment.id,
+                });
+              }
+            }
+
+            // Post fresh comment
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body,
+            });
+
+      # ── 8. Upload full report as artifact ───────────────────────
+      - name: Upload compliance report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compliance-report-${{ github.run_number }}
+          path: |
+            .github/compliance/compliance-report.md
+            .github/compliance/compliance-report.json
+          retention-days: 30
+
+      # ── 9. Fail the workflow if violations were found ────────────
+      - name: Enforce compliance result
+        if: steps.compliance.outcome == 'failure'
+        run: |
+          echo "❌ DB Compliance check failed due to CRITICAL or HIGH violations."
+          echo "   Review the compliance report in the PR comment or Actions summary."
+          exit 1

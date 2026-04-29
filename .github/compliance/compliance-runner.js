@@ -1,0 +1,196 @@
+#!/usr/bin/env node
+// ═══════════════════════════════════════════════════════════════════
+// DB Compliance Checker — CI Agent Runner
+// Usage: node compliance-runner.js [--standards path/to/standards.json]
+//        Reads changed SQL files from CHANGED_FILES env var (newline separated)
+//        or scans all .sql files if run locally
+// ═══════════════════════════════════════════════════════════════════
+
+const fs   = require('fs');
+const path = require('path');
+const ComplianceEngine = require('./compliance-engine-node.js');
+
+// ─── Config ──────────────────────────────────────────────────────────────────
+const STANDARDS_PATH = process.argv.includes('--standards')
+  ? process.argv[process.argv.indexOf('--standards') + 1]
+  : process.env.STANDARDS_PATH || null;
+
+const OUTPUT_FORMAT = process.env.OUTPUT_FORMAT || 'summary'; // 'summary' | 'json' | 'markdown'
+const FAIL_ON_SEVERITY = (process.env.FAIL_ON_SEVERITY || 'CRITICAL,HIGH').split(',');
+
+// ─── Load Standards ───────────────────────────────────────────────────────────
+function loadStandards() {
+  if (STANDARDS_PATH && fs.existsSync(STANDARDS_PATH)) {
+    try {
+      const custom = JSON.parse(fs.readFileSync(STANDARDS_PATH, 'utf8'));
+      const merged = JSON.parse(JSON.stringify(ComplianceEngine.DEFAULT_STANDARDS));
+      // Deep merge prefixes
+      if (custom.prefixes) {
+        Object.keys(custom.prefixes).forEach(k => {
+          merged.prefixes[k] = Object.assign(merged.prefixes[k] || {}, custom.prefixes[k]);
+        });
+      }
+      if (custom.general)    Object.assign(merged.general, custom.general);
+      if (custom.tablespace) Object.assign(merged.tablespace, custom.tablespace);
+      if (custom.columns)    Object.assign(merged.columns, custom.columns);
+      console.log(`📋 Loaded custom standards from: ${STANDARDS_PATH}`);
+      return merged;
+    } catch (e) {
+      console.error(`⚠️  Failed to load standards file: ${e.message}. Using defaults.`);
+    }
+  }
+  console.log('📋 Using built-in Oracle naming convention standards');
+  return JSON.parse(JSON.stringify(ComplianceEngine.DEFAULT_STANDARDS));
+}
+
+// ─── Resolve SQL files to scan ────────────────────────────────────────────────
+function resolveFiles() {
+  // GitHub Actions sets this via the workflow
+  if (process.env.CHANGED_FILES) {
+    return process.env.CHANGED_FILES
+      .split('\n')
+      .map(f => f.trim())
+      .filter(f => f && /\.(sql|ddl)$/i.test(f) && fs.existsSync(f));
+  }
+
+  // Fallback: scan entire repo for .sql files (local dev use)
+  const root = process.env.REPO_ROOT || '.';
+  const results = [];
+  function walk(dir) {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory() && entry.name !== 'node_modules' && !entry.name.startsWith('.')) {
+        walk(full);
+      } else if (entry.isFile() && /\.(sql|ddl)$/i.test(entry.name)) {
+        results.push(full);
+      }
+    }
+  }
+  walk(root);
+  return results;
+}
+
+// ─── Format output ────────────────────────────────────────────────────────────
+function formatMarkdown(allViolations, fileResults) {
+  const total    = allViolations.length;
+  const critical = allViolations.filter(v => v.severity === 'CRITICAL').length;
+  const high     = allViolations.filter(v => v.severity === 'HIGH').length;
+  const medium   = allViolations.filter(v => v.severity === 'MEDIUM').length;
+  const low      = allViolations.filter(v => v.severity === 'LOW').length;
+
+  const statusIcon = (critical + high) > 0 ? '🔴' : total > 0 ? '🟡' : '✅';
+
+  let md = `## ${statusIcon} DB Compliance Check Results\n\n`;
+  md += `| Metric | Count |\n|--------|-------|\n`;
+  md += `| Total Violations | **${total}** |\n`;
+  md += `| 🔴 Critical | ${critical} |\n`;
+  md += `| 🟠 High | ${high} |\n`;
+  md += `| 🟡 Medium | ${medium} |\n`;
+  md += `| 🟢 Low | ${low} |\n\n`;
+
+  if (fileResults.length > 0) {
+    md += `### Files Scanned\n\n`;
+    md += `| File | Objects | Violations |\n|------|---------|------------|\n`;
+    fileResults.forEach(f => {
+      const icon = f.violations > 0 ? '⚠️' : '✅';
+      md += `| ${icon} \`${f.file}\` | ${f.objects} | ${f.violations} |\n`;
+    });
+    md += '\n';
+  }
+
+  if (total > 0) {
+    md += `### Violation Details\n\n`;
+    md += `| File | Object Type | Object Name | Violation | Severity | Suggested Fix |\n`;
+    md += `|------|------------|-------------|-----------|----------|---------------|\n`;
+    allViolations.forEach(v => {
+      const sev = { CRITICAL: '🔴', HIGH: '🟠', MEDIUM: '🟡', LOW: '🟢' }[v.severity] || '';
+      md += `| \`${v.file}\` | ${v.objectType} | \`${v.objectName}\` | ${v.violation} | ${sev} ${v.severity} | \`${(v.suggestedFix || '').replace(/\n/g, ' ')}\` |\n`;
+    });
+  } else {
+    md += `### ✅ No violations found — all files comply with Oracle naming standards.\n`;
+  }
+
+  md += `\n---\n*Generated by DB Compliance Checker Agent • ${new Date().toISOString()}*\n`;
+  return md;
+}
+
+// ─── Main ─────────────────────────────────────────────────────────────────────
+async function main() {
+  console.log('\n╔══════════════════════════════════════════════╗');
+  console.log('║   DB Compliance Checker — CI Agent          ║');
+  console.log('╚══════════════════════════════════════════════╝\n');
+
+  const standards    = loadStandards();
+  const files        = resolveFiles();
+
+  if (files.length === 0) {
+    console.log('ℹ️  No SQL/DDL files to scan.');
+    process.exit(0);
+  }
+
+  console.log(`🔍 Scanning ${files.length} file(s)...\n`);
+
+  const allViolations = [];
+  const fileResults   = [];
+
+  for (const filePath of files) {
+    const relPath = path.relative(process.env.REPO_ROOT || '.', filePath);
+    try {
+      const content    = fs.readFileSync(filePath, 'utf8');
+      const objects    = ComplianceEngine.extractObjects(content);
+      const violations = ComplianceEngine.validateObjects(objects, standards, relPath);
+      allViolations.push(...violations);
+      fileResults.push({ file: relPath, objects: objects.length, violations: violations.length });
+
+      const icon = violations.length > 0 ? '⚠️ ' : '✅';
+      console.log(`  ${icon} ${relPath} — ${objects.length} objects, ${violations.length} violation(s)`);
+    } catch (e) {
+      console.error(`  ❌ Error reading ${relPath}: ${e.message}`);
+    }
+  }
+
+  console.log(`\n📊 Total violations: ${allViolations.length}`);
+
+  // ── Write GitHub Step Summary (markdown) ──────────────────────────────────
+  const markdown = formatMarkdown(allViolations, fileResults);
+
+  if (process.env.GITHUB_STEP_SUMMARY) {
+    fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, markdown);
+    console.log('📝 Results written to GitHub Step Summary');
+  }
+
+  // ── Write PR comment file (picked up by workflow) ─────────────────────────
+  fs.writeFileSync('compliance-report.md', markdown);
+  console.log('📄 compliance-report.md written');
+
+  // ── Write JSON output ─────────────────────────────────────────────────────
+  if (OUTPUT_FORMAT === 'json' || process.env.OUTPUT_FORMAT === 'json') {
+    const jsonOut = { scannedAt: new Date().toISOString(), filesScanned: fileResults, totalViolations: allViolations.length, violations: allViolations };
+    fs.writeFileSync('compliance-report.json', JSON.stringify(jsonOut, null, 2));
+    console.log('📄 compliance-report.json written');
+  }
+
+  // ── Set GitHub Actions output variables ───────────────────────────────────
+  if (process.env.GITHUB_OUTPUT) {
+    const critical = allViolations.filter(v => v.severity === 'CRITICAL').length;
+    const high     = allViolations.filter(v => v.severity === 'HIGH').length;
+    fs.appendFileSync(process.env.GITHUB_OUTPUT, `total_violations=${allViolations.length}\n`);
+    fs.appendFileSync(process.env.GITHUB_OUTPUT, `critical_violations=${critical}\n`);
+    fs.appendFileSync(process.env.GITHUB_OUTPUT, `high_violations=${high}\n`);
+  }
+
+  // ── Determine exit code ───────────────────────────────────────────────────
+  const blockingViolations = allViolations.filter(v => FAIL_ON_SEVERITY.includes(v.severity));
+  if (blockingViolations.length > 0) {
+    console.log(`\n❌ ${blockingViolations.length} blocking violation(s) found (${FAIL_ON_SEVERITY.join('/')}). Check failed.`);
+    process.exit(1);
+  }
+
+  console.log('\n✅ Compliance check passed.');
+  process.exit(0);
+}
+
+main().catch(err => {
+  console.error('Fatal error:', err);
+  process.exit(1);
+});
