@@ -4,15 +4,6 @@
 # included in a Pull Request. Posts results as a PR comment and
 # fails the check if CRITICAL or HIGH violations are found.
 # ═══════════════════════════════════════════════════════════════════
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Force Node.js 24 for actions
-        run: echo "FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true" >> $GITHUB_ENV
-
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
       
 name: DB Compliance Check
 
@@ -37,11 +28,10 @@ jobs:
   compliance-check:
     name: Oracle Naming Standards Check
     runs-on: ubuntu-latest
-    
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-      
+     
     steps:
+      - name: Force Node.js 24 for actions
+        run: echo "FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true" >> $GITHUB_ENV
       # ── 1. Checkout the repository ──────────────────────────────
       - name: Checkout repository
         uses: actions/checkout@v4
