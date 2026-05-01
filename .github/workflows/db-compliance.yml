@@ -60,16 +60,12 @@ jobs:
 
       # ── 3. Detect changed SQL files ─────────────────────────────
       - name: Get changed SQL/DDL files
-        id: changed-files
-        run: |
+         id: changed-files
+         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            # For PRs: compare base branch to head
             CHANGED=$(git diff --name-only origin/${{ github.base_ref }}...HEAD \
               | grep -E '\.(sql|ddl)$' || true)
           else
-            # For pushes: compare previous commit to current
-            # FIX 5: github.event.before is empty on the very first push to a branch;
-            #         fall back to HEAD~1 so the diff never fails with a null SHA.
             BEFORE="${{ github.event.before }}"
             if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
               BEFORE="HEAD~1"
@@ -81,12 +77,18 @@ jobs:
           echo "Found changed SQL files:"
           echo "$CHANGED"
 
-          # Pass as multiline env var
           EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
           echo "files<<$EOF" >> $GITHUB_OUTPUT
           echo "$CHANGED" >> $GITHUB_OUTPUT
           echo "$EOF" >> $GITHUB_OUTPUT
 
+          # FIX: use a true/false flag instead of a count
+          if [ -n "$CHANGED" ]; then
+            echo "has_files=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_files=false" >> $GITHUB_OUTPUT
+          fi
+          
           # Count files — guard against empty CHANGED producing a spurious "1"
           if [ -z "$CHANGED" ]; then
             echo "count=0" >> $GITHUB_OUTPUT
