@@ -28,7 +28,10 @@ jobs:
   compliance-check:
     name: Oracle Naming Standards Check
     runs-on: ubuntu-latest
-
+    
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      
     steps:
       # ── 1. Checkout the repository ──────────────────────────────
       - name: Checkout repository
