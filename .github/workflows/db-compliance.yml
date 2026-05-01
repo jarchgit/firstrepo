@@ -4,13 +4,17 @@
 # included in a Pull Request. Posts results as a PR comment and
 # fails the check if CRITICAL or HIGH violations are found.
 # ═══════════════════════════════════════════════════════════════════
-
+      
 name: DB Compliance Check
 
+<<<<<<< HEAD
 # FIX 1: Added env at workflow level so the Node 24 flag applies
 #         before any action is loaded by the runner.
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+=======
+
+>>>>>>> 5a46a255635b4548a8cbd1c5e9579ccd5432d1cd
 
 on:
   push:
@@ -30,6 +34,7 @@ jobs:
   compliance-check:
     name: Oracle Naming Standards Check
     runs-on: ubuntu-latest
+<<<<<<< HEAD
 
     steps:
       # FIX 2: Write the flag to GITHUB_ENV as the very first step,
@@ -38,6 +43,9 @@ jobs:
       - name: Force Node.js 24 for actions
         run: echo "FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true" >> $GITHUB_ENV
 
+=======
+     
+>>>>>>> 5a46a255635b4548a8cbd1c5e9579ccd5432d1cd
       # ── 1. Checkout the repository ──────────────────────────────
       - name: Checkout repository
         uses: actions/checkout@v4.2.2   # FIX 3: pinned to patch that ships Node 24 runtime
