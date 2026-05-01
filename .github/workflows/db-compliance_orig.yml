@@ -7,8 +7,6 @@
 
 name: DB Compliance Check
 
-# FIX 1: Added env at workflow level so the Node 24 flag applies
-#         before any action is loaded by the runner.
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
@@ -32,23 +30,17 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # FIX 2: Write the flag to GITHUB_ENV as the very first step,
-      #         before actions/checkout runs, so it is in effect for
-      #         every subsequent action in this job.
-      - name: Force Node.js 24 for actions
-        run: echo "FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true" >> $GITHUB_ENV
-
       # ── 1. Checkout the repository ──────────────────────────────
       - name: Checkout repository
-        uses: actions/checkout@v4.2.2   # FIX 3: pinned to patch that ships Node 24 runtime
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0   # full history needed to diff changed files
 
       # ── 2. Set up Node.js ───────────────────────────────────────
       - name: Set up Node.js
-        uses: actions/setup-node@v4.4.0   # FIX 4: pinned to patch that ships Node 24 runtime
+        uses: actions/setup-node@v4
         with:
-          node-version: '20'   # this is YOUR app's Node version, unrelated to the action runtime
+          node-version: '20'
 
       # ── 3. Detect changed SQL files ─────────────────────────────
       - name: Get changed SQL/DDL files
@@ -60,13 +52,7 @@ jobs:
               | grep -E '\.(sql|ddl)$' || true)
           else
             # For pushes: compare previous commit to current
-            # FIX 5: github.event.before is empty on the very first push to a branch;
-            #         fall back to HEAD~1 so the diff never fails with a null SHA.
-            BEFORE="${{ github.event.before }}"
-            if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
-              BEFORE="HEAD~1"
-            fi
-            CHANGED=$(git diff --name-only "$BEFORE" ${{ github.sha }} \
+            CHANGED=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }} \
               | grep -E '\.(sql|ddl)$' || true)
           fi
 
@@ -79,25 +65,21 @@ jobs:
           echo "$CHANGED" >> $GITHUB_OUTPUT
           echo "$EOF" >> $GITHUB_OUTPUT
 
-          # Count files — guard against empty CHANGED producing a spurious "1"
-          if [ -z "$CHANGED" ]; then
-            echo "count=0" >> $GITHUB_OUTPUT
-          else
-            COUNT=$(echo "$CHANGED" | grep -c '\S')
-            echo "count=$COUNT" >> $GITHUB_OUTPUT
-          fi
+          # Count files
+          COUNT=$(echo "$CHANGED" | grep -c '\S' || echo "0")
+          echo "count=$COUNT" >> $GITHUB_OUTPUT
 
       # ── 4. Skip if no SQL files changed ─────────────────────────
-      # FIX 6: exit 0 inside an `if:` step that evaluates to true still marks
-      #         the step as succeeded but does NOT stop subsequent steps from
-      #         running. Use a job-level condition instead.
       - name: Check if there are SQL files to scan
         if: steps.changed-files.outputs.count == '0'
         run: |
           echo "ℹ️ No SQL/DDL files changed in this push. Skipping compliance check."
+          exit 0
 
+      # ── 5. Copy agent scripts into workspace ────────────────────
+      #    These files should live in a .github/compliance/ folder
+      #    in your repository alongside this workflow.
       - name: Verify agent scripts exist
-        if: steps.changed-files.outputs.count != '0'
         run: |
           if [ ! -f ".github/compliance/compliance-engine-node.js" ]; then
             echo "❌ Missing: .github/compliance/compliance-engine-node.js"
@@ -111,12 +93,14 @@ jobs:
 
       # ── 6. Run the compliance check ─────────────────────────────
       - name: Run DB Compliance Check
-        if: steps.changed-files.outputs.count != '0'
         id: compliance
         env:
           CHANGED_FILES: ${{ steps.changed-files.outputs.files }}
           REPO_ROOT: ${{ github.workspace }}
+          # Point to your custom standards file (optional)
+          # Remove this line to use built-in Oracle defaults
           STANDARDS_PATH: .github/compliance/standards_cust_json.json
+          # Severities that will FAIL the check (comma-separated)
           FAIL_ON_SEVERITY: CRITICAL,HIGH
           OUTPUT_FORMAT: json
         run: |
@@ -126,8 +110,8 @@ jobs:
 
       # ── 7. Post PR comment with results ─────────────────────────
       - name: Post compliance results as PR comment
-        if: github.event_name == 'pull_request' && steps.changed-files.outputs.count != '0'
-        uses: actions/github-script@v7.0.1   # FIX 7: pinned to patch that ships Node 24 runtime
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
@@ -168,7 +152,7 @@ jobs:
       # ── 8. Upload full report as artifact ───────────────────────
       - name: Upload compliance report
         if: always()
-        uses: actions/upload-artifact@v4.6.2   # FIX 8: pinned to patch that ships Node 24 runtime
+        uses: actions/upload-artifact@v4
         with:
           name: compliance-report-${{ github.run_number }}
           path: |
